@@ -1,0 +1,12 @@
+{
+  "name": "codex-claude-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Live SSE dashboard for the Claude<->Codex bridge conversation log (zero dependencies)",
+  "bin": { "codex-claude-dashboard": "server.js" },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/sse_test.js"
+  },
+  "engines": { "node": ">=18" }
+}

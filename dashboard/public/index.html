@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Claude ⇄ Codex</title>
+<style>
+  :root {
+    --bg: #0d1017; --panel: #151a23; --line: #232b38;
+    --fg: #e6edf3; --muted: #8b98a9;
+    --claude: #a879ff; --claude-bg: #1e1830; --claude-bd: #3a2d5c;
+    --codex: #3ecf8e; --codex-bg: #14241d; --codex-bd: #235b45;
+    --human: #e3b341; --human-bg: #211d12;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg); color: var(--fg);
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column; height: 100vh;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 14px 20px; border-bottom: 1px solid var(--line);
+    background: var(--panel); position: sticky; top: 0;
+  }
+  header h1 { font-size: 16px; margin: 0; letter-spacing: .2px; }
+  header h1 .c { color: var(--claude); } header h1 .x { color: var(--codex); }
+  .status { display: flex; align-items: center; gap: 7px; margin-left: auto; color: var(--muted); font-size: 13px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: #555; transition: background .3s; }
+  .dot.live { background: var(--codex); box-shadow: 0 0 8px var(--codex); }
+  main { flex: 1; overflow-y: auto; padding: 22px clamp(12px, 6vw, 80px); }
+  .wrap { max-width: 860px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
+  .empty { color: var(--muted); text-align: center; margin-top: 18vh; font-size: 14px; }
+  .row { display: flex; }
+  .row.claude { justify-content: flex-start; }
+  .row.codex  { justify-content: flex-end; }
+  .row.human  { justify-content: center; }
+  .bubble { max-width: 78%; padding: 10px 14px; border-radius: 14px; border: 1px solid var(--line); }
+  .row.claude .bubble { background: var(--claude-bg); border-color: var(--claude-bd); border-top-left-radius: 4px; }
+  .row.codex  .bubble { background: var(--codex-bg);  border-color: var(--codex-bd);  border-top-right-radius: 4px; }
+  .row.human  .bubble {
+    background: var(--human-bg); border-color: #3a3218; color: var(--human);
+    max-width: 92%; text-align: center; font-size: 13.5px; border-radius: 999px; padding: 7px 18px;
+  }
+  .meta { display: flex; gap: 8px; align-items: baseline; margin-bottom: 3px; font-size: 11.5px; }
+  .name { font-weight: 700; letter-spacing: .4px; }
+  .row.claude .name { color: var(--claude); } .row.codex .name { color: var(--codex); }
+  .time { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .text { white-space: pre-wrap; word-break: break-word; }
+  footer { padding: 8px 20px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; background: var(--panel); }
+</style>
+</head>
+<body>
+  <header>
+    <h1><span class="c">CLAUDE</span> ⇄ <span class="x">CODEX</span></h1>
+    <div class="status"><span class="dot" id="dot"></span><span id="statusText">connecting…</span></div>
+  </header>
+  <main id="main">
+    <div class="wrap" id="wrap">
+      <div class="empty" id="empty">Waiting for the conversation… run <code>./bridge.sh</code> to start.</div>
+    </div>
+  </main>
+  <footer id="footer">0 messages</footer>
+
+<script>
+(function () {
+  var wrap = document.getElementById('wrap');
+  var empty = document.getElementById('empty');
+  var dot = document.getElementById('dot');
+  var statusText = document.getElementById('statusText');
+  var footer = document.getElementById('footer');
+  var main = document.getElementById('main');
+  var seen = {}, count = 0;
+
+  function nearBottom() { return main.scrollHeight - main.scrollTop - main.clientHeight < 120; }
+  function fmtTime(ts) {
+    var d = new Date(ts);
+    if (isNaN(d)) return ts || '';
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
+  function clearAll() { wrap.innerHTML = ''; seen = {}; count = 0; footer.textContent = '0 messages'; }
+
+  function render(m) {
+    if (m._i != null && seen[m._i]) return;
+    if (m._i != null) seen[m._i] = 1;
+    if (empty && empty.parentNode) empty.parentNode.removeChild(empty);
+    var role = (m.role || 'human').toLowerCase();
+    if (role !== 'claude' && role !== 'codex') role = 'human';
+    var stick = nearBottom();
+
+    var row = document.createElement('div'); row.className = 'row ' + role;
+    var bubble = document.createElement('div'); bubble.className = 'bubble';
+    if (role !== 'human') {
+      var meta = document.createElement('div'); meta.className = 'meta';
+      var name = document.createElement('span'); name.className = 'name'; name.textContent = role.toUpperCase();
+      var time = document.createElement('span'); time.className = 'time'; time.textContent = fmtTime(m.ts);
+      meta.appendChild(name); meta.appendChild(time); bubble.appendChild(meta);
+    }
+    var text = document.createElement('div'); text.className = 'text'; text.textContent = m.text || '';
+    bubble.appendChild(text); row.appendChild(bubble); wrap.appendChild(row);
+
+    count++; footer.textContent = count + (count === 1 ? ' message' : ' messages');
+    if (stick) main.scrollTop = main.scrollHeight;
+  }
+
+  function connect() {
+    var es = new EventSource('/events');
+    es.addEventListener('open', function () { dot.classList.add('live'); statusText.textContent = 'live'; });
+    es.addEventListener('message', function (e) { try { render(JSON.parse(e.data)); } catch (x) {} });
+    es.addEventListener('reset', function () { clearAll(); });
+    es.addEventListener('error', function () { dot.classList.remove('live'); statusText.textContent = 'reconnecting…'; });
+  }
+  connect();
+})();
+</script>
+</body>
+</html>

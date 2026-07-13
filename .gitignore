@@ -2,3 +2,5 @@ conversation.jsonl
 *.log
 node_modules/
 .DS_Store
+*.png
+.playwright-mcp/
