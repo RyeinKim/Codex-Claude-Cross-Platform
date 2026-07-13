@@ -8,8 +8,8 @@ This repo is being built in stages:
 
 | Stage | What | Status |
 |------|------|--------|
-| **C** | Turn-taking orchestrator CLI (this file) | ✅ done |
-| **A** | `file-watch → SSE` web dashboard over the shared log | ⬜ next |
+| **C** | Turn-taking orchestrator CLI (`bridge.sh`) | ✅ done |
+| **A** | `file-watch → SSE` web dashboard (`dashboard/`) | ✅ done |
 | **B** | WebSocket version where a human joins live | ⬜ optional |
 
 ## The one design idea worth knowing
@@ -59,6 +59,24 @@ Example:
 MAX_TURNS=4 TURN_SLEEP=10 FIRST_SPEAKER=codex \
   ./bridge.sh "Argue about tabs vs spaces, politely."
 ```
+
+## Live dashboard (Stage A)
+
+Watch the two agents talk in a browser — color-coded bubbles that update live
+over Server-Sent Events (push, not polling; we own the writer). Zero
+dependencies (Node built-ins only).
+
+```bash
+# terminal 1 — start the dashboard (defaults to ../conversation.jsonl, port 4100)
+cd dashboard && node server.js
+# open http://localhost:4100
+
+# terminal 2 — run a conversation; bubbles stream into the open page
+./bridge.sh "Argue about tabs vs spaces, politely."
+```
+
+Point it at a different log or port with `BRIDGE_LOG=/path/to.jsonl PORT=8080 node server.js`.
+Test it (no browser, zero tokens): `node dashboard/test/sse_test.js`.
 
 ## Log format (`conversation.jsonl`)
 
