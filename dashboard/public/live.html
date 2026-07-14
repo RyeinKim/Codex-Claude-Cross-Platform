@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Claude ⇄ Codex — live</title>
+<style>
+  :root {
+    --bg:#0d1017; --panel:#151a23; --line:#232b38; --fg:#e6edf3; --muted:#8b98a9;
+    --claude:#a879ff; --claude-bg:#1e1830; --claude-bd:#3a2d5c;
+    --codex:#3ecf8e; --codex-bg:#14241d; --codex-bd:#235b45;
+    --human:#e3b341; --human-bg:#211d12;
+    --accent:#4a9eff;
+  }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; }
+  body { background:var(--bg); color:var(--fg); font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+         display:flex; flex-direction:column; height:100vh; }
+  button, input, select { font:inherit; }
+  button { cursor:pointer; border:1px solid var(--line); background:#1c2330; color:var(--fg); border-radius:8px; padding:7px 12px; }
+  button:hover:not(:disabled) { border-color:#3a4658; }
+  button:disabled { opacity:.4; cursor:not-allowed; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#04121f; font-weight:600; }
+  input[type=text], input[type=number] { background:#0f141c; border:1px solid var(--line); color:var(--fg); border-radius:8px; padding:8px 11px; }
+  input[type=text]:focus, input[type=number]:focus { outline:none; border-color:var(--accent); }
+
+  header { display:flex; align-items:center; gap:12px; padding:12px 20px; border-bottom:1px solid var(--line); background:var(--panel); }
+  header h1 { font-size:16px; margin:0; } header h1 .c{color:var(--claude);} header h1 .x{color:var(--codex);}
+  .badge { margin-left:auto; display:flex; align-items:center; gap:7px; font-size:13px; color:var(--muted); }
+  .dot { width:9px; height:9px; border-radius:50%; background:#555; }
+  .dot.live{ background:var(--codex); box-shadow:0 0 8px var(--codex);} .dot.busy{ background:var(--human); box-shadow:0 0 8px var(--human);} .dot.paused{ background:#666; }
+  .turns { color:var(--muted); font-size:12px; }
+
+  .controls { display:flex; flex-wrap:wrap; gap:10px 14px; align-items:center; padding:11px 20px; border-bottom:1px solid var(--line); background:#111722; }
+  .controls .grow { flex:1; min-width:180px; }
+  .ctl-group { display:flex; align-items:center; gap:7px; font-size:13px; color:var(--muted); }
+  .ctl-group input[type=range]{ accent-color:var(--accent); }
+
+  main { flex:1; overflow-y:auto; padding:20px clamp(12px,5vw,70px); }
+  .wrap { max-width:860px; margin:0 auto; display:flex; flex-direction:column; gap:13px; }
+  .empty { color:var(--muted); text-align:center; margin-top:12vh; font-size:14px; }
+  .row { display:flex; }
+  .row.claude{ justify-content:flex-start; } .row.codex{ justify-content:flex-end; } .row.human{ justify-content:center; }
+  .bubble { max-width:78%; padding:10px 14px; border-radius:14px; border:1px solid var(--line); }
+  .row.claude .bubble{ background:var(--claude-bg); border-color:var(--claude-bd); border-top-left-radius:4px; }
+  .row.codex  .bubble{ background:var(--codex-bg);  border-color:var(--codex-bd);  border-top-right-radius:4px; }
+  .row.human  .bubble{ background:var(--human-bg); border-color:#3a3218; color:var(--human); max-width:92%; text-align:center; border-radius:999px; padding:7px 18px; font-size:13.5px; }
+  .meta { display:flex; gap:8px; align-items:baseline; margin-bottom:3px; font-size:11.5px; }
+  .name { font-weight:700; letter-spacing:.4px; } .row.claude .name{ color:var(--claude);} .row.codex .name{ color:var(--codex);}
+  .time { color:var(--muted); font-variant-numeric:tabular-nums; }
+  .text { white-space:pre-wrap; word-break:break-word; }
+
+  .composer { display:flex; gap:10px; padding:12px 20px; border-top:1px solid var(--line); background:var(--panel); }
+  .composer input { flex:1; }
+  .toast { position:fixed; bottom:76px; left:50%; transform:translateX(-50%); background:#3a1d1d; border:1px solid #6b2d2d; color:#ffb4b4;
+           padding:9px 16px; border-radius:10px; font-size:13px; opacity:0; transition:opacity .3s; pointer-events:none; max-width:80vw; }
+  .toast.show { opacity:1; }
+</style>
+</head>
+<body>
+  <header>
+    <h1><span class="c">CLAUDE</span> ⇄ <span class="x">CODEX</span> · live</h1>
+    <span class="turns" id="turns">0 turns</span>
+    <span class="badge"><span class="dot paused" id="dot"></span><span id="statusText">paused</span></span>
+  </header>
+
+  <div class="controls">
+    <input type="text" class="grow" id="topic" placeholder="Topic to kick things off… (e.g. debate tabs vs spaces)" />
+    <button class="primary" id="startBtn">▶ Start</button>
+    <button id="stopBtn" disabled>■ Stop</button>
+    <button id="stepBtn">⏭ Step</button>
+    <div class="ctl-group">first
+      <select id="firstSpeaker"><option value="claude">claude</option><option value="codex">codex</option></select>
+    </div>
+    <div class="ctl-group">delay
+      <input type="range" id="delay" min="0" max="30" step="1" value="6" />
+      <span id="delayVal">6s</span>
+    </div>
+    <div class="ctl-group">max turns
+      <input type="number" id="maxTurns" min="0" value="0" style="width:64px" title="0 = unlimited" />
+    </div>
+  </div>
+
+  <main id="main"><div class="wrap" id="wrap">
+    <div class="empty" id="empty">Enter a topic and press <b>Start</b>. Jump in anytime with the box below.</div>
+  </div></main>
+
+  <div class="composer">
+    <input type="text" id="say" placeholder="Say something to steer the conversation… (Enter to send)" />
+    <button id="sendBtn">Send</button>
+  </div>
+  <div class="toast" id="toast"></div>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var wrap=$('wrap'), empty=$('empty'), main=$('main'), dot=$('dot'), statusText=$('statusText'), turnsEl=$('turns');
+  var seen={}, count=0;
+
+  function post(cmd) {
+    return fetch('/control', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(cmd) })
+      .catch(function(){ toast('network error'); });
+  }
+  var toastT;
+  function toast(msg){ var t=$('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(toastT); toastT=setTimeout(function(){t.classList.remove('show');},3500); }
+
+  function nearBottom(){ return main.scrollHeight - main.scrollTop - main.clientHeight < 130; }
+  function fmtTime(ts){ var d=new Date(ts); return isNaN(d)?'':d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'}); }
+  function clearAll(){ wrap.innerHTML=''; seen={}; count=0; turnsEl.textContent='0 turns'; }
+
+  function render(m){
+    if (m._i!=null && seen[m._i]) return;
+    if (m._i!=null) seen[m._i]=1;
+    if (empty && empty.parentNode) empty.parentNode.removeChild(empty);
+    var role=(m.role||'human').toLowerCase();
+    if (role!=='claude' && role!=='codex') role='human';
+    var stick=nearBottom();
+    var row=document.createElement('div'); row.className='row '+role;
+    var bubble=document.createElement('div'); bubble.className='bubble';
+    if (role!=='human'){
+      var meta=document.createElement('div'); meta.className='meta';
+      var name=document.createElement('span'); name.className='name'; name.textContent=role.toUpperCase();
+      var time=document.createElement('span'); time.className='time'; time.textContent=fmtTime(m.ts);
+      meta.appendChild(name); meta.appendChild(time); bubble.appendChild(meta);
+    }
+    var text=document.createElement('div'); text.className='text'; text.textContent=m.text||'';
+    bubble.appendChild(text); row.appendChild(bubble); wrap.appendChild(row);
+    count++; turnsEl.textContent = count + (count===1?' turn':' turns');
+    if (stick) main.scrollTop=main.scrollHeight;
+  }
+
+  function applyState(s){
+    dot.className='dot ' + (s.busy?'busy':(s.running?'live':'paused'));
+    statusText.textContent = s.busy ? (s.nextSpeaker?'…'+s.nextSpeaker+' thinking':'thinking') : (s.running?'live':'paused');
+    $('startBtn').disabled = s.busy;
+    $('stopBtn').disabled  = !s.running;
+    $('stepBtn').disabled  = s.running || s.busy;
+    // reflect config without clobbering a field the user is editing
+    if (document.activeElement !== $('delay')) { $('delay').value=s.turnSleep; $('delayVal').textContent=s.turnSleep+'s'; }
+    if (document.activeElement !== $('maxTurns')) $('maxTurns').value=s.maxTurns;
+    if (document.activeElement !== $('firstSpeaker')) $('firstSpeaker').value=s.nextSpeaker;
+  }
+
+  // controls
+  $('startBtn').onclick=function(){
+    post({ type:'start', topic:$('topic').value, firstSpeaker:$('firstSpeaker').value,
+           turnSleep:Number($('delay').value), maxTurns:Number($('maxTurns').value) });
+  };
+  $('stopBtn').onclick=function(){ post({type:'stop'}); };
+  $('stepBtn').onclick=function(){ post({type:'step'}); };
+  $('delay').oninput=function(){ $('delayVal').textContent=this.value+'s'; };
+  $('delay').onchange=function(){ post({type:'config', turnSleep:Number(this.value)}); };
+  $('maxTurns').onchange=function(){ post({type:'config', maxTurns:Number(this.value)}); };
+  $('firstSpeaker').onchange=function(){ post({type:'config', nextSpeaker:this.value}); };
+  function send(){ var v=$('say').value.trim(); if(!v) return; post({type:'say', text:v}); $('say').value=''; }
+  $('sendBtn').onclick=send;
+  $('say').addEventListener('keydown', function(e){ if(e.key==='Enter') send(); });
+  $('topic').addEventListener('keydown', function(e){ if(e.key==='Enter') $('startBtn').click(); });
+
+  // stream
+  function connect(){
+    var es=new EventSource('/live-events');
+    es.addEventListener('message', function(e){ try{ render(JSON.parse(e.data)); }catch(x){} });
+    es.addEventListener('state', function(e){ try{ applyState(JSON.parse(e.data)); }catch(x){} });
+    es.addEventListener('reset', function(){ clearAll(); });
+    es.addEventListener('error', function(e){ try{ var d=JSON.parse(e.data); if(d&&d.message) toast(d.message); }catch(x){} });
+  }
+  connect();
+})();
+</script>
+</body>
+</html>
