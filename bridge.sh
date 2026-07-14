@@ -34,6 +34,12 @@ FIRST_SPEAKER="${FIRST_SPEAKER:-claude}"
 
 TOPIC="${1:-${BRIDGE_TOPIC:-Design a tiny URL shortener together. Keep each reply under 80 words.}}"
 
+# Mode: default is the full loop. "--once <speaker>" runs a SINGLE turn against
+# the existing log and prints the reply to stdout (no seed, no truncation) — the
+# interactive server uses this so it reuses the hardened turn logic below.
+MODE="loop"; ONCE_SPEAKER=""
+if [ "${1:-}" = "--once" ]; then MODE="once"; ONCE_SPEAKER="${2:-claude}"; fi
+
 # Personas double as loop-back guards: each side is told NOT to voice the other.
 CLAUDE_PERSONA="${CLAUDE_PERSONA:-You are CLAUDE, in a conversation with another AI assistant named CODEX. Reply with exactly ONE short message, in your own voice as CLAUDE. Do NOT write lines for CODEX or roleplay CODEX. Do not use any tools; just talk.}"
 CODEX_PERSONA="${CODEX_PERSONA:-You are CODEX, in a conversation with another AI assistant named CLAUDE. Reply with exactly ONE short message, in your own voice as CODEX. Do NOT write lines for CLAUDE or roleplay CLAUDE.}"
@@ -131,7 +137,24 @@ run_codex() { # $1 = prompt
   printf '%s' "$reply"
 }
 
-# ---- main -------------------------------------------------------------------
+# ---- single-turn mode (used by the interactive server) ----------------------
+if [ "$MODE" = "once" ]; then
+  ONCE_SPEAKER="$(printf '%s' "$ONCE_SPEAKER" | tr '[:upper:]' '[:lower:]')"
+  case "$ONCE_SPEAKER" in
+    claude|codex) ;;
+    *) echo "error: --once requires 'claude' or 'codex' (got: $ONCE_SPEAKER)" >&2; exit 2;;
+  esac
+  once_prompt="$(build_prompt "$ONCE_SPEAKER")"
+  if [ "$ONCE_SPEAKER" = "claude" ]; then
+    reply="$(run_claude "$once_prompt")" || exit 1
+  else
+    reply="$(run_codex "$once_prompt")" || exit 1
+  fi
+  printf '%s' "$reply"
+  exit 0
+fi
+
+# ---- main (loop mode) -------------------------------------------------------
 : > "$LOG"
 append human "$TOPIC"
 echo "▶ topic  : $TOPIC"
