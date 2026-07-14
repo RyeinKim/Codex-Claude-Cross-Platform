@@ -95,7 +95,7 @@
 (function () {
   var $ = function (id) { return document.getElementById(id); };
   var wrap=$('wrap'), empty=$('empty'), main=$('main'), dot=$('dot'), statusText=$('statusText'), turnsEl=$('turns');
-  var seen={}, count=0;
+  var seen={}, count=0, currentEpoch=-1;
 
   function post(cmd) {
     return fetch('/control', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(cmd) })
@@ -109,6 +109,7 @@
   function clearAll(){ wrap.innerHTML=''; seen={}; count=0; turnsEl.textContent='0 turns'; }
 
   function render(m){
+    if (m.epoch!=null && m.epoch>currentEpoch){ clearAll(); currentEpoch=m.epoch; }  // new conversation -> clear old DOM
     if (m._i!=null && seen[m._i]) return;
     if (m._i!=null) seen[m._i]=1;
     if (empty && empty.parentNode) empty.parentNode.removeChild(empty);
@@ -125,13 +126,14 @@
     }
     var text=document.createElement('div'); text.className='text'; text.textContent=m.text||'';
     bubble.appendChild(text); row.appendChild(bubble); wrap.appendChild(row);
-    count++; turnsEl.textContent = count + (count===1?' turn':' turns');
+    count++;   // header turn-count is driven from server state (AI turns), see applyState
     if (stick) main.scrollTop=main.scrollHeight;
   }
 
   function applyState(s){
     dot.className='dot ' + (s.busy?'busy':(s.running?'live':'paused'));
     statusText.textContent = s.busy ? (s.nextSpeaker?'…'+s.nextSpeaker+' thinking':'thinking') : (s.running?'live':'paused');
+    if (s.turnCount!=null) turnsEl.textContent = s.turnCount + (s.turnCount===1?' turn':' turns');
     $('startBtn').disabled = s.busy;
     $('stopBtn').disabled  = !s.running;
     $('stepBtn').disabled  = s.running || s.busy;
@@ -162,7 +164,7 @@
     var es=new EventSource('/live-events');
     es.addEventListener('message', function(e){ try{ render(JSON.parse(e.data)); }catch(x){} });
     es.addEventListener('state', function(e){ try{ applyState(JSON.parse(e.data)); }catch(x){} });
-    es.addEventListener('reset', function(){ clearAll(); });
+    es.addEventListener('reset', function(e){ try{ var d=JSON.parse(e.data); if(d&&d.epoch!=null) currentEpoch=d.epoch; }catch(x){} clearAll(); });
     es.addEventListener('error', function(e){ try{ var d=JSON.parse(e.data); if(d&&d.message) toast(d.message); }catch(x){} });
   }
   connect();

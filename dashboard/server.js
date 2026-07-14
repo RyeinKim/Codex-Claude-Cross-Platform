@@ -15,6 +15,7 @@ const path = require('path');
 const ROOT = path.resolve(__dirname, '..');
 const LOG = process.env.BRIDGE_LOG || path.join(ROOT, 'conversation.jsonl');
 const PORT = parseInt(process.env.PORT || '4100', 10);
+const HOST = process.env.HOST || '127.0.0.1';   // loopback only — don't expose the log over the LAN
 const PUBLIC = path.join(__dirname, 'public');
 const BACKSTOP_MS = parseInt(process.env.BACKSTOP_MS || '1000', 10);
 
@@ -98,8 +99,8 @@ const server = http.createServer((req, res) => {
   return serveStatic(req, res);
 });
 
-server.listen(PORT, () => {
-  console.log('dashboard  → http://localhost:' + PORT);
+server.listen(PORT, HOST, () => {
+  console.log('dashboard  → http://' + (HOST === '0.0.0.0' ? 'localhost' : HOST) + ':' + PORT);
   console.log('watching   → ' + LOG);
 });
 
