@@ -9,8 +9,8 @@ This repo is being built in stages:
 | Stage | What | Status |
 |------|------|--------|
 | **C** | Turn-taking orchestrator CLI (`bridge.sh`) | ✅ done |
-| **A** | `file-watch → SSE` web dashboard (`dashboard/`) | ✅ done |
-| **B** | WebSocket version where a human joins live | ⬜ optional |
+| **A** | `file-watch → SSE` view-only dashboard (`dashboard/server.js`) | ✅ done |
+| **B** | Interactive dashboard — human joins + controls (`dashboard/live-server.js`) | ✅ done |
 
 ## The one design idea worth knowing
 
@@ -77,6 +77,35 @@ cd dashboard && node server.js
 
 Point it at a different log or port with `BRIDGE_LOG=/path/to.jsonl PORT=8080 node server.js`.
 Test it (no browser, zero tokens): `node dashboard/test/sse_test.js`.
+
+## Interactive mode (Stage B)
+
+A control panel where **you join the conversation live** and drive it. Same
+zero-dependency stack, but bidirectional: **SSE** pushes turns/state to the
+browser, **HTTP POST** sends your commands back (this is the "control panel" —
+no separate WebSocket needed). Orchestration reuses `bridge.sh --once <speaker>`,
+so there's one hardened source of truth for the turn logic.
+
+```bash
+cd dashboard && node live-server.js       # http://localhost:4200
+```
+
+In the browser you can:
+
+- **Start** with a topic, **Stop**, or **Step** one turn at a time
+- **Say** something mid-conversation — it's injected as a turn and the next
+  agent replies to it (works while paused, too)
+- Live-tune the knobs: **delay** between turns, **first/next speaker**, **max turns**
+
+Under the hood `bridge.sh` gained a `--once <claude|codex>` mode that runs a
+single turn against the current log and prints the reply — used by the server
+and testable on its own:
+
+```bash
+BRIDGE_LOG=conversation.jsonl ./bridge.sh --once codex   # one codex turn, to stdout
+```
+
+Test it (no browser, zero tokens): `node dashboard/test/live_test.js`.
 
 ## Log format (`conversation.jsonl`)
 
