@@ -6,7 +6,8 @@
   "bin": { "codex-claude-dashboard": "server.js" },
   "scripts": {
     "start": "node server.js",
-    "test": "node test/sse_test.js"
+    "start:live": "node live-server.js",
+    "test": "node test/sse_test.js && node test/live_test.js && node test/live_cancel_test.js"
   },
   "engines": { "node": ">=18" }
 }
