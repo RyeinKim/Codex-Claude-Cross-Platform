@@ -35,6 +35,7 @@ stderr의 마지막 에러 메시지와 exit code를 먼저 확인한다.
 | 원본 세션 기록을 직접 보고 싶음 | [11](#11-원본-세션-파일-위치claude--codex) |
 | 테스트 실패 | [12](#12-테스트-실패-시-읽는-법) |
 | live 대시보드에 중복/유령 메시지 | [13](#13-live-대시보드-이상-중복--유령-메시지) |
+| `BRIDGE_RESUME` 세션 만료 / 토큰 절감이 없음 | [14](#14-bridge_resume-세션-만료--토큰-절감-확인) |
 
 ---
 
@@ -493,3 +494,43 @@ exit 1로 끝난다.
 3. 그래도 섞여 보이면 로그가 외부 writer로 오염된 경우다 — 새 Start(또는
    `/control`로 보내는 `reset` 명령)로 대화를 비우고, 이후 **루프 모드 bridge.sh와
    live-server에 같은 `BRIDGE_LOG`를 절대 함께 쓰지 않는다.**
+
+---
+
+## 14. `BRIDGE_RESUME` 세션 만료 / 토큰 절감 확인
+
+`BRIDGE_RESUME=1`(옵트인, **루프 모드 전용**)은 매 턴 전체 transcript를 다시 보내는
+대신, 각 CLI가 자신의 세션을 resume하게 하고 상대의 최신 메시지(델타)만 전달한다.
+기본값은 OFF(`0`)이며, 이때 동작은 예전과 완전히 동일하다.
+
+**증상 A — 실행은 되는데 토큰이 줄지 않는다**
+
+- 정상일 수 있다. resume의 실제 이득은 **프롬프트-캐시 할인**이지 청구 입력 토큰
+  자체의 감소가 아니다. 각 CLI는 로컬 rollout에서 전체 히스토리를 재구성해
+  전송하므로, 캐시가 miss나면 전액 재청구된다.
+- 캐시는 **짧은 시간 창(~5분)**만 유효하다. `TURN_SLEEP`이 그보다 크면 매 턴 cache
+  miss가 나 절감이 사라진다 — resume를 쓸 때는 `TURN_SLEEP`을 작게 유지한다.
+- 실측: 응답 envelope의 `cache_read_input_tokens` vs `input_tokens`를 비교한다.
+  cache_read 비중이 낮으면 절감이 없는 것이다.
+
+**증상 B — `resume failed for <speaker> — retrying once without resume` 가 stderr에 보인다**
+
+- 정상 동작이다. 세션이 만료/무효화되면 bridge가 **정확히 1회** 전체 transcript로
+  (resume 없이) 재시도해 자동 복구한다(self-heal). 그 재시도가 성공하면 실행은
+  계속되고 새 세션 id를 다시 캡처한다.
+- 재시도**도** 실패하면 진짜 에러다 — bridge는 실제 진단을 stderr에 남기고
+  non-zero로 중단한다(fail-loud, resume가 에러를 숨기지 않는다).
+
+**증상 C — codex resume가 계속 새 세션을 만든다 (절감 안 됨)**
+
+- bridge는 codex `--json` 출력의 `thread.started` 이벤트에서 thread id를 파싱한다.
+  codex 버전이 그 이벤트의 필드명을 바꾸면 id 캡처가 실패해 매 턴 새 세션이 생긴다.
+  `codex --version` 확인 후, 설치된 버전의 `codex exec --json` 출력 형식이
+  `{"type":"thread.started","thread_id":"…"}`인지 점검한다.
+
+**주의**
+
+- resume는 **루프 모드에서만** 동작한다. Stage B(인터랙티브 서버)는 여전히 전체
+  transcript를 보낸다(설계상 연기됨).
+- resume는 각 CLI의 **private 세션 스토어**(`~/.claude/projects`, `~/.codex/sessions`)에
+  기록한다. 그 디렉터리를 지우면 진행 중 resume가 stale이 되어 위 증상 B가 발생한다.

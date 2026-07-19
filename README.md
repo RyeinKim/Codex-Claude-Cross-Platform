@@ -61,6 +61,7 @@ Watch the conversation stream to the terminal and to `conversation.jsonl`.
 | `BRIDGE_LOG` | `conversation.jsonl` | shared JSONL log path |
 | `CLAUDE_BIN` / `CODEX_BIN` | `claude` / `codex` | binary paths (the tests inject mocks here) |
 | `CLAUDE_PERSONA` / `CODEX_PERSONA` | see script | system prompt + loop-back guard — each side is told NOT to voice the other |
+| `BRIDGE_RESUME` | `0` | **opt-in, loop mode only**: `1` resumes each CLI's session and sends only the counterpart's latest message (a delta) instead of the full transcript. Off by default — see [Implementation notes](#implementation-notes) |
 
 Example:
 
@@ -226,6 +227,7 @@ still announcing `internal error` — nothing fails silently.
 bash test/run_all.sh          # every suite, one command
 ./test/run_mock_test.sh       # bridge happy path
 ./test/run_error_test.sh      # bridge failure paths + security
+./test/run_resume_test.sh     # opt-in BRIDGE_RESUME (loop mode)
 cd dashboard && npm test      # the three node suites
 ```
 
@@ -236,6 +238,7 @@ All suites run the **real** `bridge.sh` / servers against **mock** CLIs in
 |-------|------|--------|
 | bridge: happy path | `test/run_mock_test.sh` | 1 human seed + 4 strictly-alternating AI turns, correct role tags, valid JSONL, no empty replies, context **grows** across turns; `--once` prints one reply to stdout and **appends nothing** |
 | bridge: failure + security | `test/run_error_test.sh` | non-zero exit on CLI failure and on `is_error` envelopes (never fake success), no placeholder recycled into the log, an embedded newline can't forge a `human:`/`codex:` turn, `CODEX_PERSONA` is actually delivered to codex |
+| bridge: resume (opt-in) | `test/run_resume_test.sh` | `BRIDGE_RESUME=1` threads each CLI's session and sends a delta (not the full transcript), a fresh run resets it, codex uses `exec resume` read-only, personas still reach both sides, a stale session self-heals in one retry, a genuine error still aborts loud, and the injection guard collapses the delta |
 | dashboard: SSE push | `dashboard/test/sse_test.js` | backlog replayed on connect, an appended line is pushed live via `fs.watch`, every message carries `_i` for dedupe |
 | dashboard: interactive | `dashboard/test/live_test.js` | `start` seeds the topic then auto-runs, `maxTurns` halts the loop, a paused `say` injects a human turn **and** draws exactly one AI reply |
 | dashboard: cancellation | `dashboard/test/live_cancel_test.js` | Stop during a slow in-flight turn kills the child and drops the stale reply — zero ghost turns in log or stream, state returns to idle |
@@ -244,8 +247,11 @@ Mock CLIs (`test/mocks/`): `mock-claude.sh` / `mock-codex.sh` (happy path —
 each reply reports the prompt's byte count to prove context growth),
 `fail-claude.sh` (simulated 429 lockout, exit 1), `error-claude.sh` (exit 0 but
 an `is_error:true` envelope), `inject-claude.sh` (newline-forged
-`human:`/`codex:` lines), `spy-codex.sh` (records the exact prompt codex
-received), `slow-claude.sh` (sleeps so a test can cancel it mid-turn).
+`human:`/`codex:` lines), `spy-codex.sh` / `spy-claude.sh` (record the exact
+prompt / persona each CLI received), `slow-claude.sh` (sleeps so a test can
+cancel it mid-turn), and the resume set — `resume-claude.sh` / `resume-codex.sh`
+(echo a session id), `stale-claude.sh` / `genfail-claude.sh` (drive the
+fail-loud retry paths), `noid-claude.sh` (resumes without returning a new id).
 
 ### Hardening provenance
 
@@ -297,9 +303,15 @@ findings it covers, and `live_cancel_test.js` covers the concurrency ones.
 - **Loop-back prevention**: personas explicitly forbid each model from voicing
   the other; role tags keep turn ownership unambiguous. (Codex has no
   `--append-system-prompt`, so its persona is prepended on stdin instead.)
-- Stage C feeds the full (windowed) transcript each turn (stateless, most
-  portable). A later optimization is `--resume` (Claude) / `codex exec resume`
-  (Codex) to keep context server-side and cut tokens.
+- Stage C feeds the full (windowed) transcript each turn by default (stateless,
+  most portable). Set `BRIDGE_RESUME=1` (loop mode only) to instead resume each
+  CLI's own session (`claude -p --resume` / `codex exec resume`) and send only
+  the counterpart's latest message; a resume failure retries once statelessly and
+  then fails loud. NOTE: the payoff is a **prompt-cache discount, not a guaranteed
+  token cut** — the CLIs still replay history locally, and the cache lapses when
+  `TURN_SLEEP` exceeds the provider's short cache window, so verify with a
+  real-CLI run (envelope usage fields) before relying on it. Stage B (interactive)
+  still sends the full transcript.
 
 ## Repo layout
 
