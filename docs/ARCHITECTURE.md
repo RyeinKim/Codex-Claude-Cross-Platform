@@ -565,7 +565,8 @@ Stage A — `GET /events`. Same headers/retry/ping; only two event types:
     the UI; the server clamps `turnSleep` to 0–300 s) with an
     interruptible sleep.
   - `MAX_TURNS` (default **6**) bounds every loop run; Stage B's `maxTurns`
-    stops the auto-loop.
+    (default **0** = unlimited) caps the auto-loop only when set to a
+    positive value — otherwise it runs until Stop.
   - **Fail-loud on lockout**: a 429/auth failure aborts with the real
     diagnostic and a non-zero exit — the bridge never retries into a lockout
     and never masks one as success, so a caller (CI, cron, dashboard) can
