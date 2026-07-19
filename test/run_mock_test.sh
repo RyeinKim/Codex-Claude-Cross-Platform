@@ -54,6 +54,17 @@ if [ -n "$c1" ] && [ -n "$c2" ] && [ "$c2" -gt "$c1" ]; then
   pass "context accumulates across turns (${c1} → ${c2} chars fed to codex)"
 else failf "context did not grow (c1=$c1 c2=$c2)"; fi
 
+# --- FIRST_SPEAKER=codex flips who opens the conversation ---
+colog="$tmp/codexfirst.jsonl"
+CLAUDE_BIN="$here/mocks/mock-claude.sh" \
+CODEX_BIN="$here/mocks/mock-codex.sh" \
+BRIDGE_LOG="$colog" MAX_TURNS=4 TURN_SLEEP=0 FIRST_SPEAKER=codex \
+  bash "$root/bridge.sh" "TEST TOPIC: say hello" >/dev/null
+coroles=$(jq -r '.role' "$colog" | paste -sd, -)
+[ "$coroles" = "human,codex,claude,codex,claude" ] \
+  && pass "FIRST_SPEAKER=codex opens with codex: $coroles" \
+  || failf "codex-first order wrong: $coroles"
+
 # --- --once single-turn mode (used by the interactive server) ---
 onlog="$tmp/once.jsonl"
 printf '%s\n' '{"ts":"t","role":"human","text":"hello there codex and claude"}' > "$onlog"
