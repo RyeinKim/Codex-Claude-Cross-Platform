@@ -2,7 +2,7 @@
 #
 # Run every test suite in the repo (zero real tokens — all suites use mock CLIs).
 #   bash suites : orchestrator happy-path + failure/injection
-#   node suites : Stage A SSE push, Stage B interactive, Stage B cancellation
+#   node suites : Stage A SSE push, Stage B interactive, cancellation, epoch/_i
 #
 set -uo pipefail
 
@@ -17,6 +17,7 @@ run "bridge: failure + security" bash "$here/run_error_test.sh"
 run "dashboard: SSE push"        node "$root/dashboard/test/sse_test.js"
 run "dashboard: interactive"     node "$root/dashboard/test/live_test.js"
 run "dashboard: cancellation"    node "$root/dashboard/test/live_cancel_test.js"
+run "dashboard: epoch + _i"      node "$root/dashboard/test/live_epoch_test.js"
 
 echo
 if [ "$fail" -eq 0 ]; then
