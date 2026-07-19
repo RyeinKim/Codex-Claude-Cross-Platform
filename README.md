@@ -150,7 +150,7 @@ In the browser you can:
   **■ Stop**, or **⏭ Step** one turn at a time
 - **Say** something mid-conversation — it's injected as a human turn and steered into the dialogue
 - Live-tune the knobs: **delay** slider (0–30 s), **first/next speaker**,
-  **max turns** (0 = unlimited)
+  **max turns** (default `0` = unlimited — the auto-loop runs until you Stop)
 - Read the status dot (live / busy-thinking / paused) and a server-driven AI-turn counter; errors appear as toasts
 
 Command semantics (everything POSTs JSON to `/control`, is acknowledged
@@ -249,9 +249,12 @@ received), `slow-claude.sh` (sleeps so a test can cancel it mid-turn).
 
 ### Hardening provenance
 
-This code went through **two adversarial review rounds**: 9 confirmed findings
-against the bridge (fail-loud gaps, placeholder recycling, prompt injection via
-embedded newlines, persona delivery, …) and 17 against the interactive server
+This code went through **two adversarial review rounds** — on top of the
+mock-tested loop, that's **three verification rounds** total (see
+[ARCHITECTURE](docs/ARCHITECTURE.md#provenance-three-verification-rounds)):
+9 confirmed findings against the bridge (fail-loud gaps, placeholder recycling,
+prompt injection via embedded newlines, persona delivery, …) and 17 against the
+interactive server
 (double-start/TOCTOU races, ghost replies after Stop, unclamped inputs,
 unhandled rejections, …). Every finding was fixed, and the classes of failure
 are locked in by the suites above — `run_error_test.sh` names the bridge
