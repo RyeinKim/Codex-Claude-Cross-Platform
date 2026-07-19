@@ -7,6 +7,9 @@
 #   #8 no placeholder recycling after a failure
 #   #4 prompt-injection: embedded newline cannot forge a fake turn
 #   #1 CODEX_PERSONA is actually delivered to codex
+# Plus hard-invariant locks:
+#   #1b personas reach BOTH CLIs: CLAUDE_PERSONA is delivered to claude too
+#   exit 2: an invalid speaker (loop or --once) is rejected with code 2
 #
 set -uo pipefail
 
@@ -58,6 +61,30 @@ ccount=$(grep -c '^codex:' "$spy" 2>/dev/null || true)
   || failf "forged 'codex:' turn leaked (found $ccount)"
 grep -q "You are CODEX" "$spy" && pass "CODEX_PERSONA delivered to codex (loop-back guard active)" \
   || failf "CODEX_PERSONA missing from codex prompt"
+
+# --- #1b: claude ALSO gets its persona, via --append-system-prompt -----------
+echo "▶ [persona] CLAUDE_PERSONA reaches the claude CLI"
+log="$tmp/persona.jsonl"; cspy="$tmp/cspy.txt"
+CLAUDE_BIN="$M/spy-claude.sh" CODEX_BIN="$M/mock-codex.sh" SPY_FILE="$cspy" \
+CLAUDE_PERSONA="You are CLAUDE. SENTINEL_CLAUDE_PERSONA_7788." \
+BRIDGE_LOG="$log" MAX_TURNS=1 TURN_SLEEP=0 FIRST_SPEAKER=claude \
+  bash "$root/bridge.sh" "seed topic" >/dev/null 2>&1
+grep -q "SENTINEL_CLAUDE_PERSONA_7788" "$cspy" 2>/dev/null \
+  && pass "CLAUDE_PERSONA delivered to claude via --append-system-prompt" \
+  || failf "CLAUDE_PERSONA missing from claude invocation"
+
+# --- exit codes: an invalid speaker is rejected with code 2 (not 0 or 1) -----
+echo "▶ [exit-code] an invalid speaker exits 2"
+CLAUDE_BIN="$M/mock-claude.sh" CODEX_BIN="$M/mock-codex.sh" \
+BRIDGE_LOG="$tmp/x.jsonl" FIRST_SPEAKER=bogus \
+  bash "$root/bridge.sh" "seed" >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 2 ] && pass "bad FIRST_SPEAKER exits 2 (rc=$rc)" \
+  || failf "expected exit 2 for bad FIRST_SPEAKER, got $rc"
+CLAUDE_BIN="$M/mock-claude.sh" CODEX_BIN="$M/mock-codex.sh" \
+BRIDGE_LOG="$tmp/x.jsonl" \
+  bash "$root/bridge.sh" --once bogus >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 2 ] && pass "bad --once speaker exits 2 (rc=$rc)" \
+  || failf "expected exit 2 for bad --once speaker, got $rc"
 
 echo
 rm -rf "$tmp"
