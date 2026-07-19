@@ -279,11 +279,24 @@ Stage C is **stateless per turn**: every invocation re-sends the full
   schema, trivially crash-safe, and `--once` gets full context from a bare
   file — which is exactly what makes the Stage B server so simple.
 
-The future optimization, noted in the README, is to keep context server-side:
-`claude -p --resume <session-id>` on the Claude side and `codex exec resume`
-on the Codex side, sending only the newest message per turn. That trades the
-above simplicity for a session-id lifecycle (creation, expiry, invalidation on
-truncate) and is deliberately deferred.
+Keeping context server-side is now an **opt-in for loop mode**: `BRIDGE_RESUME=1`
+resumes each CLI's own session (`claude -p --resume <session-id>` /
+`codex exec resume <thread-id>`) and sends only the newest message per turn. It
+trades the above simplicity for a per-speaker session-id lifecycle — captured
+from the claude `.session_id` envelope and the codex `--json` `thread.started`
+event, held in shell scalars for the loop run, and reset whenever a fresh run
+truncates the log. A resume call that fails retries **once** with the full
+transcript and no resume, then fails loud: a stale session self-heals in that one
+retry, while a genuine error survives it and aborts the run (never masked).
+
+The default stays stateless (byte-identical), and **Stage B still re-sends the
+full transcript** — extending resume to the sole-writer server (its own session
+store keyed by epoch) is deferred until the saving is confirmed against a real
+CLI. And the saving is only a **prompt-cache discount**, not a guaranteed token
+cut: the CLIs replay history from their local rollout, so billed input tokens
+still grow, and the cache lapses once `TURN_SLEEP` exceeds the provider's short
+(~5-min) window. Verify the envelope usage fields (`cache_read_input_tokens` vs
+`input_tokens`) on a real run before promising any reduction.
 
 ## Stage A mechanism (`dashboard/server.js`)
 
@@ -635,6 +648,8 @@ five suites).
 - **Unbounded turns without a timeout binary.** If neither `timeout` nor
   `gtimeout` is on `PATH`, `TURN_TIMEOUT` is a no-op (the banner warns). On
   macOS: `brew install coreutils`.
-- **Stateless token cost.** Full windowed transcript re-sent every turn until
-  `--resume` / `codex exec resume` support lands (see
+- **Stateless token cost by default.** The full windowed transcript is re-sent
+  every turn unless `BRIDGE_RESUME=1` (loop mode only) resumes each CLI's session
+  to send just a delta; Stage B always re-sends the full transcript. Even with
+  resume the win is a cache discount, not a guaranteed token cut (see
   [Statelessness tradeoff](#statelessness-tradeoff)).

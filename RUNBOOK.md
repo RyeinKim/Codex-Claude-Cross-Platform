@@ -120,6 +120,7 @@ BRIDGE_LOG="run-$(date +%Y%m%d-%H%M%S).jsonl" ./bridge.sh "새 주제"
 | `BRIDGE_TOPIC` | (URL shortener 기본 문장) | CLI 인자가 없을 때의 주제 |
 | `CLAUDE_BIN` / `CODEX_BIN` | `claude` / `codex` | 바이너리 경로 (테스트가 mock을 주입하는 지점) |
 | `CLAUDE_PERSONA` / `CODEX_PERSONA` | 스크립트 참고 | 각자의 시스템 프롬프트 겸 루프백 가드 ("상대 대사를 쓰지 마라") |
+| `BRIDGE_RESUME` | `0` | **옵트인, 루프 모드 전용**: `1`이면 각 CLI 세션을 resume해 전체 transcript 대신 상대의 최신 메시지(델타)만 전송. 기본 OFF (아래 레이트리밋 절 참고) |
 
 인라인 예시:
 
@@ -240,6 +241,7 @@ gh repo create codex-claude-cross-platform --private --source=. --push
 
 - **사용량은 진짜로 닳습니다.** Anthropic·OpenAI 모두 **5시간 롤링 윈도우 + 주간 캡**을 웹앱(claude.ai / chatgpt.com)과 **공유**합니다. 여기서 태운 만큼 웹에서 쓸 양이 줄어듭니다. `MAX_TURNS`는 작게, `TURN_SLEEP`은 넉넉하게.
 - **Stage B의 `max turns` 기본값은 `0` = 무제한.** Stop을 누르기 전까지 계속 돕니다. 값(예: 6)을 넣고 시작하는 습관을 권장합니다.
+- **`BRIDGE_RESUME=1`(옵트인, 루프 모드 전용)**은 매 턴 전체 transcript 대신 델타만 보내 캐시 할인을 노립니다. 단 실제 이득은 프롬프트-캐시 할인뿐이고(각 CLI가 로컬에서 히스토리를 재생) `TURN_SLEEP`이 캐시 창(~5분)을 넘으면 무효라, 실 CLI usage 필드(`cache_read_input_tokens` vs `input_tokens`)로 검증한 뒤에만 신뢰하세요. Stage B는 여전히 전체 transcript를 보냅니다.
 - **`HOST`를 외부에 노출하지 마세요.** 두 서버 모두 기본 `127.0.0.1`(loopback)이고 **인증이 전혀 없습니다.** `HOST=0.0.0.0`으로 띄우면 Stage A는 대화 로그가, Stage B는 컨트롤 플레인이 LAN에 통째로 노출됩니다 — 남이 내 구독 쿼터로 대화를 돌릴 수 있습니다.
 - **ToS 경계**: 본인 단일 구독의 개인적 headless 사용까지가 의도된 범위입니다. **계정 공유, 다계정으로 캡 우회, 인증 토큰 추출/재사용 금지.** 지속적·무인·상용 워크로드는 종량제 API 키가 정석입니다.
 - **`ANTHROPIC_API_KEY` 함정**: 이 변수가 셸에 설정되어 있으면 `claude -p`가 구독 로그인 대신 **API 키(종량 과금) 경로로 조용히 전환**됩니다. 구독 쿼터를 쓸 생각이면 실행 전에 `unset ANTHROPIC_API_KEY` 하세요. Stage B 서버는 `process.env`를 자식 `bridge.sh`에 그대로 물려주므로 서버를 띄우는 셸에도 똑같이 적용됩니다.
