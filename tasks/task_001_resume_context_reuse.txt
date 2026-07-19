@@ -1,0 +1,217 @@
+# Task: resume 기반 컨텍스트 재사용 최적화 (opt-in, C→A 단계적)
+
+작성: 2026-07-19 · Phase A(plan) 산출물 · 코드 미수정
+근거: 리서치 팬아웃(4) + 설계 판정단(3안) + 종합 워크플로우
+
+## 목표
+각 턴마다 전체 windowed transcript를 다시 보내는 대신, 각 CLI가 자신의 이전
+세션을 resume하여 "직전 상대 발화 델타"만 전달함으로써 bridge→CLI 입력
+페이로드를 선형화한다. 단 이 동작은 새 opt-in 환경변수(BRIDGE_RESUME) 뒤에
+두고 **기본값 OFF**로, 플래그 미설정 시 오늘의 stateless 전체-transcript 경로가
+**byte-identical**하게 유지되는 것을 완료 조건으로 한다.
+
+- 1단계(Approach C): bridge.sh 루프 모드 + 목만 변경. live-server / --once 무변경.
+- 검증 단계: 수동 실 CLI 1회 실행으로 usage 필드 검사(절감 실체 확정).
+- 2단계(Approach A, 사람 승인·검증 통과 후): 동일 플래그를 Stage B로 확장(별도 task).
+
+IMPORTANT: 토큰 절감은 **미입증**이다. CLI는 로컬 rollout에서 전체 히스토리를
+재구성·재전송하므로 청구 입력 토큰은 여전히 증가할 수 있다. 실제 이득은
+프롬프트-캐시 할인(claude cache_read ~10%, codex/OpenAI prefix cache)뿐이며,
+TURN_SLEEP이 ~5분 ephemeral 캐시 창을 넘으면 cache miss로 무효화된다.
+→ 검증 전까지 어떤 문서도 토큰 감소를 약속하지 않고 "cache-hit discount,
+verify before promising"으로만 기술한다.
+
+## 설계 판정 (판정단 결론)
+- 채택: **Approach C 먼저 → A로 단계 확장** (둘 다 opt-in, 기본 OFF).
+- Approach C (loop-mode only, in-process sid) — 8.0점. 가장 안전: live-server /
+  --once / epoch 커플링 / sidecar / cross-process 채널이 전부 change set 밖.
+  약점: Stage B(주 토큰 소모처) 절감 0, 루프도 턴3+에서만 이득(MAX_TURNS 기본 6).
+- Approach A (opt-in sidecar, stateless default) — 7.3점. 올바른 경로(Stage B 포함)
+  커버 + 기본 OFF byte-identical. 비용: 최대 통합 표면, --once가 순수 read-only 상실.
+  → 검증 통과 후 2단계 목표.
+- Approach B (always-on) — 4.3점. **탈락**: opt-in 없이 stateless 기본을 뒤집어
+  이 저장소 문화(의도적 stateless 문서화)에 위배, 기존 assertion 재작성 강제,
+  resume 상시 고장 시 턴당 2회 호출로 baseline보다 quota 더 소모 가능.
+
+## 분석 결과
+- 기존 패턴:
+  - render_ctx(bridge.sh:79-83)가 매 턴 전체 windowed transcript 재렌더 →
+    build_prompt(85-90)가 run_claude/run_codex에 $1로 전달 = 비용 근원(입력 토큰
+    quadratic 증가).
+  - injection guard = render_ctx의 gsub("\n";" ")|gsub("\r";" ") 표현.
+    build_incr_prompt가 그대로 재사용(guard 재발명·제거 금지).
+  - claude JSON envelope에 이미 .session_id 존재(run_claude:113은 .result만 추출,
+    .session_id 버림) → resume handle로 재활용.
+  - codex는 -o "$out"에 last message만 기록, stdout은 >/dev/null →
+    --json thread.started 이벤트 파싱으로 id 캡처 필요.
+  - run_claude/run_codex는 실패 시 stderr+non-zero(bridge.sh:101/109/114/129/133)
+    fail-loud 패턴 → stale-sid fallback은 그 위에 bounded 1회 재시도로 구축.
+  - 루프 모드=단일 long-lived 프로세스(스칼라 변수 유지 가능); --once=fresh
+    프로세스(상태 불가) → 2단계는 live-server(sole writer)가 id 소유.
+  - run_*가 command substitution 서브셸에서 호출 → in-process 변수만으로 id를
+    부모에 못 올림. SIDFILE(mktemp) 왕복 불가피(동일 프로세스 private temp).
+  - spy-*.sh는 SPY_FILE OVERWRITE → 멀티턴 시퀀스 캡처 불가 → append 스파이 신규 필요.
+  - truncateLog(live-server.js:72)는 cmdStart/cmdReset 단일 choke point + epoch++
+    → 2단계 sessionIds 리셋의 자연스러운 위치.
+- 영향 범위 (1단계):
+  - bridge.sh (게이트·build_incr_prompt·SIDFILE·run_claude/run_codex resume 분기·
+    루프 스칼라 상태·stale-sid fallback)
+  - test/mocks/mock-claude.sh (--resume 감지·id echo·append 스파이)
+  - test/mocks/mock-codex.sh (exec resume 서브커맨드·--json thread.started)
+  - test/mocks/ (신규 append 스파이·stale-id 목·generic-error 목)
+  - test/run_mock_test.sh (BRIDGE_RESUME=1 블록, default 경로 보존)
+  - test/run_error_test.sh (stale-sid 재시도·non-stale 에러 미은닉 잠금)
+  - test/run_all.sh (신규 resume 스위트 배선·스위트 개수 주석 정정)
+  - README.md / RUNBOOK.md / docs/ARCHITECTURE.md / docs/TROUBLESHOOTING.md (동시 동기화)
+  - (2단계만) dashboard/live-server.js, dashboard/test/live_resume_test.js, dashboard/package.json
+- 의존성:
+  - jq (기존·불변; .session_id 추출·rindex 델타 렌더)
+  - claude CLI (--resume/--session-id/--append-system-prompt 공존 실 검증 필요 — 테스트는 목만)
+  - codex CLI (exec resume 서브커맨드·--json thread.started·-c sandbox_mode=read-only — 테스트는 목만)
+  - Node 내장 http/fs/path/child_process (2단계 — npm 의존 추가 금지)
+  - coreutils timeout/gtimeout (with_timeout — 기존·변경 없음)
+
+## 구현 계획
+
+### 1단계 — Approach C (bridge.sh 루프 모드 + 목)
+1. [게이트] bridge.sh config 블록(24-35)에 BRIDGE_RESUME="${BRIDGE_RESUME:-0}"
+   추가(기본 OFF). 0이면 모든 resume 분기를 건너뛰어 루프 모드가 오늘과
+   byte-identical 유지. cross-process 채널 도입 금지(상태가 루프 프로세스를
+   벗어나지 않는 것이 C의 핵심).
+2. [델타 프롬프트] build_prompt(85) 옆에 build_incr_prompt(speaker) 추가:
+   jq rindex로 speaker 자신의 마지막 턴 '이후' 라인(상대 최신 발화 + 중간 human
+   say)만 렌더. render_ctx의 동일 injection guard 표현을 델타 텍스트에 재사용
+   (guard 제거 없이 렌더 창만 전체→델타로 축소).
+3. [SIDFILE 채널] 시작 시 SIDFILE=$(mktemp), EXIT trap(66)에 정리 추가. 자식이
+   sid를 SIDFILE에 쓰고, command substitution 반환 후 루프가 읽어 스칼라에 저장.
+   동일 프로세스 private temp(out-of-band cross-process 채널 아님).
+4. [루프 상태] for-loop 직전(165-167)에 claude_sid="" codex_sid="" 선언(bash 3.2
+   — assoc array 금지). : > "$LOG"(158)가 루프 전 1회 truncate → fresh 실행은 빈
+   id로 시작 → truncation 리셋 자동(추가 코드 0). 루프엔 epoch 개념 없음.
+5. [per-turn 분기] 루프 본문(168 교체)에서 speaker의 sid 선택. BRIDGE_RESUME=1 &&
+   -n sid이면 build_incr_prompt+resume, 아니면 build_prompt 전체(턴1·2는 id 없어
+   전체). 성공 턴 후 speaker 전환(183) 전 SIDFILE에서 (재발급 가능) id를 스칼라에
+   write-back — codex가 resume마다 id re-mint 가능하므로 매 턴 재캡처.
+6. [run_claude] 2번째 파라미터 ${2:-}=inbound sid 추가. 비어있지 않으면 호출(98)에
+   --resume "$2" 삽입. --append-system-prompt "$CLAUDE_PERSONA"는 매 턴 유지(persona는
+   per-invocation, 세션 미영속). .result 파싱(113) 후
+   sid=$(jq -r '.session_id // empty')로 추출해 SIDFILE 기록. stdout=reply-only 유지.
+7. [run_codex] 턴1: codex exec -에 --json 추가(stdout=JSONL 이벤트), reply는 여전히
+   -o "$out". stdout을 버리지 말고 첫 {"type":"thread.started","thread_id":"<uuid>"}를
+   grep해 SIDFILE 기록. 이후 턴: codex exec resume "$sid" - --json --skip-git-repo-check
+   -o "$out" -c sandbox_mode="read-only" (resume 서브커맨드에 --sandbox 없음 → -c로
+   강제, --ephemeral 절대 미포함). codex persona는 resume 턴에도 stdin re-prepend
+   (작은 상수 비용으로 persona 불변식·드리프트 방지).
+8. [stale-sid fallback] resume 호출이 non-zero면 저장 sid 비우고 전체 transcript +
+   resume 없이 **정확히 1회** 재시도 후 새 id 캡처. 재시도도 실패하면 non-zero
+   반환해 run abort(기존 fail-loud). 진짜 auth/rate-limit/timeout은 재시도에서도
+   실패 → 여전히 loud, placeholder 미기록.
+9. [미변경 경로 확인] --once 블록(141-155) 무변경(BRIDGE_RESUME/sid 미전달로 현재
+   경로). dashboard/live-server.js 전혀 미변경 → Stage B 전체 transcript 유지.
+   SOLE-writer 제어 평면이 change set 밖임을 명시 검증.
+10. [목 확장] mock-claude.sh를 --resume <id> 감지로 확장(id 없으면 fresh session_id
+    발급, resume이면 동일 id echo, 매 턴 saw N chars+수신 id를 APPEND 스파이
+    RESUME_LOG에 추가). mock-codex.sh를 exec resume <id> - 인식+--json 하 가짜
+    thread.started를 stdout·canned reply를 -o에 기록·-c sandbox_mode=read-only/
+    --skip-git-repo-check present·--ephemeral absent 검증. 별도 stale-id 목·
+    generic-error 목 추가.
+11. [bridge 테스트] test/run_mock_test.sh에 BRIDGE_RESUME=1 블록(또는
+    test/run_resume_test.sh 신규+run_all.sh 배선): 턴1 --resume 없음+id 캡처,
+    턴3 --resume <캡처 id> 전달, 턴3 프롬프트 델타 크기(default의 c2>c1과 반대로
+    작고 일정), persona 플래그 매 턴 present, injection guard가 델타 newline 붕괴,
+    두 번째 fresh 루프 실행이 다시 --resume 없이 시작(=truncation 리셋).
+    run_error_test.sh에 stale-sid 1회 stateless 재시도→성공 + non-stale 에러가
+    삼켜지지 않고 abort 케이스 추가.
+12. [기존 assertion 처리] run_mock_test.sh:50-55 context grows(c2>c1)는 default 경로
+    에서 byte-identical 유지. resume ON 블록에서만 역(델타 안정: c2<=c1 또는 작은
+    상수) assertion을 별도 추가 — 기존 assertion 재작성 없이 분리 보존.
+13. [문서 동기화 — 같은 커밋] README(config 표 BRIDGE_RESUME, Implementation-notes의
+    '--resume=later optimization' 문구·Tests 표 'context grows' 행·mock 목록),
+    RUNBOOK(config 표+rate-limit 절 resume 주석), ARCHITECTURE(Statelessness
+    tradeoff 269-286·Known limitations 638-640을 '루프 모드 한정 opt-in 구현됨,
+    Stage B는 여전히 quadratic'로 재작성·run_codex -c sandbox_mode 치환·stale-session
+    fail 행), TROUBLESHOOTING(stale-session 증상+~/.claude/projects·~/.codex/sessions가
+    load-bearing) 넷 모두 + run_all.sh 스위트 개수 주석 정정.
+14. [검증 게이트] bash test/run_all.sh 전체 green 후에만 커밋(feature 브랜치,
+    conventional commit, 작업 단위별 분리).
+
+### 검증 단계 (커밋과 별개, 사람 지정 소유자)
+15. 격리된 CODEX_HOME/CLAUDE config 디렉터리로 사용자 실 세션 스토어를 건드리지
+    않는 수동 실 CLI 루프 1회 실행 → envelope usage 필드(cache_read_input_tokens
+    vs input_tokens) 검사 → 절감이 프롬프트-캐시 할인인지 실제 토큰 감소인지 확정.
+    이 검증 전에는 문서가 토큰 감소를 약속하지 않음.
+
+### 2단계 — Approach A (사람 승인·검증 통과 후, 별도 task 파일·별도 커밋)
+16. 동일 opt-in 플래그를 Stage B로 확장: live-server.js에
+    sessionIds={claude:null,codex:null} + epoch별 sidecar(SESSION_STORE=LOG+'.sessions',
+    Node 내장만), runOnce(75-90)에서 자식 env로 CLAUDE_RESUME_ID/CODEX_RESUME_ID+
+    BRIDGE_SESSION_OUT 주입, close 성공 분기(86)에서 scratch에서 새 id 읽어 저장·
+    sidecar 영속, truncateLog(72)에서 epoch++ 옆에 sessionIds 리셋+sidecar 삭제.
+    --once는 env-in/scratch-out으로 id를 나르되 conversation.jsonl에 절대 append
+    안 함(SOLE-writer 유지). dashboard/test/live_resume_test.js 신규 + run_all.sh +
+    dashboard npm test 배선.
+
+## 테스트 기준
+- [ ] default(BRIDGE_RESUME 미설정) byte-identical: 기존 run_mock_test.sh:50-55
+      context grows(c2>c1)와 3개 node 스위트가 무수정 통과.
+- [ ] 목 전용(실 CLI 절대 미호출): 주입된 resume-aware 목이 세션 id 기록/echo.
+      턴1 --resume 부재+id 캡처, 이후 턴 --resume <캡처 id> 전달 검증.
+- [ ] resume ON 시 델타 프롬프트 크기 assertion(전체 transcript 아님)이 resume
+      블록에서 old context-grows를 대체(default 경로 원본은 별도 보존).
+- [ ] truncation 후 리셋: 두 번째 fresh 루프 실행(2단계는 start/reset epoch bump)이
+      다시 --resume 없이 시작 = 세션 id가 stale 컨텍스트 미연결.
+- [ ] fail-loud 잠금: stale-sid는 1회 stateless 재시도 후 성공(exit 0, stderr 진단),
+      non-stale 에러(auth/rate-limit/timeout 시뮬)는 미은닉·non-zero abort·placeholder
+      미기록 — run_error_test.sh로 증명.
+- [ ] injection guard: 델타 텍스트에도 \n/\r→space 붕괴 적용, 위조 human:/codex: 불가.
+- [ ] persona: claude 매 턴 --append-system-prompt present, codex resume 턴에도
+      re-prepend present(run_error_test persona-delivery green).
+- [ ] codex 목이 resume 턴에 -c sandbox_mode=read-only/--skip-git-repo-check present·
+      --ephemeral absent 검증.
+- [ ] --once가 conversation.jsonl 미append(1단계 자명·미변경; 2단계 live_resume_test로 명시).
+- [ ] bash test/run_all.sh 전체 green(신규 resume 스위트 배선 포함)이 커밋 전 통과.
+
+## 제약사항
+- Bash 3.2: mapfile·associative array·${var,,} 금지. id는 스칼라 2개+jq -r+SIDFILE로만.
+- 서버 zero 의존성: 2단계 live-server도 Node 내장만 — npm install 금지.
+- Fail-loud: CLI 에러 은닉 금지, 실패 턴 non-zero exit, placeholder 기록 금지, 진단은
+  stderr. stale-sid fallback은 정확히 1회 bounded 재시도 후 실패 시 loud.
+- SOLE writer: 세션 id는 로그가 아닌 out-of-band(1단계 SIDFILE 동일 프로세스 temp,
+  2단계 env-in/scratch-out+sidecar). --resume은 CLI private 스토어에만 씀. --once는
+  절대 append 안 함.
+- 레코드 monotonic _i(never reset)+epoch(truncation마다 bump) 불변. 2단계는 sessionIds를
+  epoch에 종속(bump 시 클리어)해 stale 컨텍스트 누출 방지.
+- render_ctx injection guard 유지: build_incr_prompt가 동일 gsub 재사용.
+- persona 두 CLI 모두 도달: claude 매 턴 --append-system-prompt, codex resume 턴에도 stdin re-prepend.
+- Subscription-auth-only: 문서화된 CLI 플래그만. API 키·토큰 추출·내부 엔드포인트·
+  rollout/auth.json 직접 파싱 금지.
+- 테스트는 실 CLI 절대 미호출 — 전부 test/mocks/ 확장. 실 검증은 사람이 격리
+  CODEX_HOME/CLAUDE config로 수동만.
+- throttle 기본값(MAX_TURNS/TURN_SLEEP) 무변경, HOST 127.0.0.1 loopback 유지.
+- 문서 4종 동일 커밋 동기화 — 특히 ARCHITECTURE statelessness 절 재작성.
+- 변경 금지: dashboard/live-server.js·--once 블록·log 레코드 형태·_i 시맨틱(1단계 한정).
+
+## execute 전 확인 필요 (사람 결정)
+1. 기본값 정책: resume 플래그 기본 OFF 확정(권장). always-on(B) 거부 확인.
+2. Fallback 정책: 순수 fail-loud(모든 resume 실패 시 abort) vs bounded 1회 재시도
+   후 실패(만료 세션 self-heal, stale-vs-real 휴리스틱 의존). **가장 큰 안전 결정**.
+3. Stage B 범위: 지금(A) vs 검증 후 defer(C 먼저). 권장=defer.
+4. codex persona on resume: replay-only(저렴·드리프트 위험) vs 매 턴 re-prepend
+   (강한 강제·작은 비용, C 권장).
+5. claude --session-id: 턴1 UUID pre-mint vs envelope .session_id 역파싱. 그리고
+   --resume+--output-format json+재-append persona 공존 실 CLI 확인.
+6. codex id 캡처: --json thread.started 파싱 의존 수용+매 턴 재캡처, read-only를
+   -c sandbox_mode=read-only로 이동·--ephemeral 미포함 확인.
+7. 검증 소유자: usage 필드 검사 수동 실 CLI 실행 주체 + 격리 config 보장.
+
+## 리스크
+- 토큰 절감 미입증(3안 공통): 실제 이득은 프롬프트-캐시 할인뿐, TURN_SLEEP>~5분이면 무효.
+  문서는 검증 전까지 "cache-hit discount, verify before promising"으로만.
+- fail-loud 위반 위험(가장 날카로운 엣지): stale vs auth/rate-limit/timeout 오분류 시
+  진짜 에러 은닉 또는 만료 세션 hard-abort. run_error_test로 반드시 잠금.
+- codex id 캡처 취약: --json thread.started 필드명 버전 간 이동. 빈 id 시 조용히
+  전체-transcript 폴백(로깅 없으면 silent 회귀). 매 턴 재캡처 필요.
+- Stage B 커버리지 갭(1단계 C): 주 토큰 소모처 절감 0, C는 디딩돌 아님(별도 2단계).
+- --once 순수 read-only 약화(2단계 A만): CLI private 세션 스토어 변형 → 격리 config 필요.
+- persona 드리프트(2단계 A replay-only 시): 장기적으로 약함. C는 매 턴 re-prepend로 회피.
+- 문서-동기화 부담: 착지마다 4종 동일 커밋 갱신 놓치면 docs-sync 불변식 위반.
