@@ -291,12 +291,17 @@ retry, while a genuine error survives it and aborts the run (never masked).
 
 The default stays stateless (byte-identical), and **Stage B still re-sends the
 full transcript** — extending resume to the sole-writer server (its own session
-store keyed by epoch) is deferred until the saving is confirmed against a real
-CLI. And the saving is only a **prompt-cache discount**, not a guaranteed token
-cut: the CLIs replay history from their local rollout, so billed input tokens
-still grow, and the cache lapses once `TURN_SLEEP` exceeds the provider's short
-(~5-min) window. Verify the envelope usage fields (`cache_read_input_tokens` vs
-`input_tokens`) on a real run before promising any reduction.
+store keyed by epoch) is the deferred Phase 2. The saving is a **prompt-cache
+discount**, now **verified on the real CLIs (2026-07-21)**: both resume contracts
+hold (claude `--resume` coexists with `--output-format json` and returns
+`.session_id`; codex `exec resume <id>` emits `thread.started` and accepts
+`-c sandbox_mode=read-only`), and the resumed turn bills mostly from cache —
+claude `input_tokens=2` / `cache_read_input_tokens=15289`, codex
+`cached_input_tokens=29184` of `38890`. claude's cache is **1-hour** ephemeral
+(more durable than the earlier ~5-min assumption); codex's window is shorter, so
+keep `TURN_SLEEP` modest. This is a per-turn input discount confirmed on a short
+probe — not an A/B measurement of the whole-conversation saving versus the
+stateless path. Re-run `tools/verify_resume_real.sh` to reconfirm.
 
 ## Stage A mechanism (`dashboard/server.js`)
 
@@ -650,6 +655,7 @@ five suites).
   macOS: `brew install coreutils`.
 - **Stateless token cost by default.** The full windowed transcript is re-sent
   every turn unless `BRIDGE_RESUME=1` (loop mode only) resumes each CLI's session
-  to send just a delta; Stage B always re-sends the full transcript. Even with
-  resume the win is a cache discount, not a guaranteed token cut (see
+  to send just a delta; Stage B always re-sends the full transcript. With resume
+  the win is a **per-turn prompt-cache discount** — verified on real CLIs, but not
+  an A/B measurement of the whole-conversation saving (see
   [Statelessness tradeoff](#statelessness-tradeoff)).

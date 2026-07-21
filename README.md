@@ -307,13 +307,15 @@ findings it covers, and `live_cancel_test.js` covers the concurrency ones.
   most portable). Set `BRIDGE_RESUME=1` (loop mode only) to instead resume each
   CLI's own session (`claude -p --resume` / `codex exec resume`) and send only
   the counterpart's latest message; a resume failure retries once statelessly and
-  then fails loud. NOTE: the payoff is a **prompt-cache discount, not a guaranteed
-  token cut** — the CLIs still replay history locally, and the cache lapses when
-  `TURN_SLEEP` exceeds the provider's short cache window, so verify with a
-  real-CLI run (envelope usage fields) before relying on it — the manual harness
-  `tools/verify_resume_real.sh` (`RUN_REAL_CLI=1`, or `DRY_RUN=1` for a zero-token
-  plumbing check) does exactly that. Stage B (interactive) still sends the full
-  transcript.
+  then fails loud. **Verified against the real CLIs (2026-07-21):** both resume
+  contracts hold, and the resumed turn is billed as a **prompt-cache discount** —
+  claude billed `input_tokens=2` with `cache_read=15289`; codex reported
+  `cached_input_tokens=29184` of `38890`. claude uses a **1-hour** ephemeral cache
+  so the discount survives a generous `TURN_SLEEP` (codex's window is shorter —
+  keep `TURN_SLEEP` modest). It's a per-turn input discount, not a measured
+  whole-conversation cut; reconfirm any time with `tools/verify_resume_real.sh`
+  (`RUN_REAL_CLI=1`, or `DRY_RUN=1` for a zero-token plumbing check). Stage B
+  (interactive) still sends the full transcript.
 
 ## Repo layout
 
