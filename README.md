@@ -310,8 +310,10 @@ findings it covers, and `live_cancel_test.js` covers the concurrency ones.
   then fails loud. NOTE: the payoff is a **prompt-cache discount, not a guaranteed
   token cut** — the CLIs still replay history locally, and the cache lapses when
   `TURN_SLEEP` exceeds the provider's short cache window, so verify with a
-  real-CLI run (envelope usage fields) before relying on it. Stage B (interactive)
-  still sends the full transcript.
+  real-CLI run (envelope usage fields) before relying on it — the manual harness
+  `tools/verify_resume_real.sh` (`RUN_REAL_CLI=1`, or `DRY_RUN=1` for a zero-token
+  plumbing check) does exactly that. Stage B (interactive) still sends the full
+  transcript.
 
 ## Repo layout
 
