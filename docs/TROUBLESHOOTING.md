@@ -505,13 +505,16 @@ exit 1로 끝난다.
 
 **증상 A — 실행은 되는데 토큰이 줄지 않는다**
 
-- 정상일 수 있다. resume의 실제 이득은 **프롬프트-캐시 할인**이지 청구 입력 토큰
-  자체의 감소가 아니다. 각 CLI는 로컬 rollout에서 전체 히스토리를 재구성해
-  전송하므로, 캐시가 miss나면 전액 재청구된다.
-- 캐시는 **짧은 시간 창(~5분)**만 유효하다. `TURN_SLEEP`이 그보다 크면 매 턴 cache
-  miss가 나 절감이 사라진다 — resume를 쓸 때는 `TURN_SLEEP`을 작게 유지한다.
-- 실측: 응답 envelope의 `cache_read_input_tokens` vs `input_tokens`를 비교한다.
-  cache_read 비중이 낮으면 절감이 없는 것이다.
+- resume의 실제 이득은 **프롬프트-캐시 할인**이지 청구 입력 토큰 자체의 감소가
+  아니다. **실 CLI 검증(2026-07-21)에서 확인됨** — resume 턴은 대부분 캐시에서
+  청구된다 (claude `input_tokens=2`/`cache_read=15289`, codex
+  `cached_input_tokens=29184`/`38890`).
+- claude 캐시는 **1시간**(`ephemeral_1h`) 유효라 `TURN_SLEEP`이 넉넉해도 할인이
+  살아있다. 다만 codex는 창이 더 짧으니 `TURN_SLEEP`을 과하게 늘리면 cache miss가
+  날 수 있다 — 토큰이 안 줄면 `TURN_SLEEP`을 줄여본다.
+- 실측/재확인: `RUN_REAL_CLI=1 tools/verify_resume_real.sh`, 또는 응답 envelope의
+  `cache_read_input_tokens` vs `input_tokens`를 직접 비교한다. cache_read 비중이
+  낮으면 할인이 없는 것이다.
 
 **증상 B — `resume failed for <speaker> — retrying once without resume` 가 stderr에 보인다**
 
