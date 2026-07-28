@@ -16,6 +16,7 @@ test/run_mock_test.sh        # bridge happy path + --once
 test/run_error_test.sh       # fail-loud + is_error + injection + persona delivery
 test/mocks/                  # mock/fail/error/inject/spy/slow CLI stand-ins
 docs/                        # ARCHITECTURE.md (en), TROUBLESHOOTING.md (ko)
+tasks/                       # task_NNN_*.txt — plan-then-execute work records (see Task plans)
 ```
 
 ## Commands
@@ -76,6 +77,19 @@ Exit codes: 0 ok, 1 failed turn / missing jq, 2 bad speaker (FIRST_SPEAKER or --
 When changing any flag, command, port, env var, record shape, SSE event, or protocol, update ALL of:
 `README.md` (en), `RUNBOOK.md` (ko), `docs/ARCHITECTURE.md` (en), `docs/TROUBLESHOOTING.md` (ko)
 in the same change.
+
+## Task plans
+
+- Non-trivial work is planned before it is written. A **plan** pass ("plan 모드로") produces
+  `tasks/task_NNN_<slug>.txt` and **edits no source** — codebase, existing patterns and blast radius
+  are read first, and the plan lands as its own commit (`docs: add task plan for …`). An **execute**
+  pass ("execute 모드로") reads that file and implements it; branch and commit rules live in **Git**,
+  test gates in **Testing rules**.
+- Sections in use (`task_001`, ko): goal / design verdict / analysis / implementation plan / test criteria /
+  constraints / open decisions needing a human / risks. Keep the file updated as reality diverges.
+- `task_001_resume_context_reuse.txt` is **live, not history**: stage 1 (`BRIDGE_RESUME`, loop mode)
+  shipped and was verified against the real CLIs, but Approach A — extending the flag to Stage B — is
+  deferred there to "a separate task file, separate commit". That becomes `task_002` when it happens.
 
 ## Git
 
