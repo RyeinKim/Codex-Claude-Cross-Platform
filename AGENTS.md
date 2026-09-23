@@ -1,5 +1,7 @@
 # AGENTS.md
 
+> `CLAUDE.md` is a symlink to this file. Write instructions here, and keep `CLAUDE.md` a symlink — never replace it with a regular file.
+
 Bridge that makes Claude Code CLI and Codex CLI talk to each other via a shared JSONL log
 (`conversation.jsonl`), using each tool's subscription login. Bash orchestrator + two zero-dependency Node dashboards.
 
