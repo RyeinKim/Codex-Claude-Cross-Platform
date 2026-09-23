@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 Bridge that makes Claude Code CLI and Codex CLI talk to each other via a shared JSONL log
 (`conversation.jsonl`), using each tool's subscription login. Bash orchestrator + two zero-dependency Node dashboards.
